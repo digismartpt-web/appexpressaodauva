@@ -1,0 +1,125 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Améliorer les interactions tactiles */
+  button,
+  [role="button"],
+  input[type="submit"],
+  input[type="button"] {
+    -webkit-appearance: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Améliorer les formulaires sur mobile */
+  input,
+  textarea,
+  select {
+    -webkit-appearance: none;
+    border-radius: 0;
+  }
+
+  /* Éviter le zoom sur les inputs sur iOS */
+  input[type="text"],
+  input[type="email"],
+  input[type="tel"],
+  input[type="password"],
+  input[type="number"],
+  input[type="url"],
+  input[type="search"],
+  textarea,
+  select {
+    font-size: 16px;
+  }
+
+  @media (min-width: 640px) {
+
+    input[type="text"],
+    input[type="email"],
+    input[type="tel"],
+    input[type="password"],
+    input[type="number"],
+    input[type="url"],
+    input[type="search"],
+    textarea,
+    select {
+      font-size: 14px;
+    }
+  }
+}
+
+@layer utilities {
+  .touch-manipulation {
+    touch-action: manipulation;
+  }
+
+  .line-clamp-1 {
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 1;
+  }
+
+  .line-clamp-2 {
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .line-clamp-3 {
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+  }
+}
+
+/* Fix Google Maps Address Autocomplete Issues */
+.pac-container {
+  z-index: 10000 !important;
+  border-radius: 8px;
+  margin-top: 4px;
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+  border: 1px solid #e5e7eb;
+}
+
+/* Hide Google Maps error overlays that might block the input */
+.gm-err-container,
+.gm-err-content,
+.gm-err-icon,
+.gm-err-modal,
+.gm-err-title,
+.gm-err-message,
+.gm-style-cc,
+.gm-style-moc,
+.gm-err-dismiss,
+[aria-label="Ignorer"],
+.dismissButton {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  opacity: 0 !important;
+}
+
+/* Force hide any fixed/absolute Google overlays over the input */
+div[style*="z-index: 1000001"],
+div[style*="z-index: 1000002"] {
+  display: none !important;
+}
+
+/* Prevent Google Maps from injecting styles that mess with input height/blocking */
+.pac-target-input {
+  background-color: white !important;
+}

@@ -1,0 +1,84 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Règles pour les utilisateurs
+    match /users/{userId} {
+      // Permettre à l'utilisateur de lire/écrire ses propres données
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+      
+      // Permettre aux admins et pizzerias de lire tous les utilisateurs
+      allow read: if request.auth != null && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'pizzeria'];
+    }
+    
+    // Règles pour les pizzas
+    match /pizzas/{pizzaId} {
+      // Tout le monde peut lire les pizzas (même non connecté pour le menu public)
+      allow read: if true;
+      
+      // Seuls les admins et pizzerias peuvent créer/modifier/supprimer
+      allow write: if request.auth != null && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'pizzeria'];
+    }
+    
+    // Règles pour les extras
+    match /extras/{extraId} {
+      // Tout le monde peut lire les extras
+      allow read: if true;
+      
+      // Seuls les admins et pizzerias peuvent créer/modifier/supprimer
+      allow write: if request.auth != null && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'pizzeria'];
+    }
+    
+    // Règles pour les catégories
+    match /categories/{categoryId} {
+      // Tout le monde peut lire les catégories
+      allow read: if true;
+      
+      // Seuls les admins et pizzerias peuvent créer/modifier/supprimer
+      allow write: if request.auth != null && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'pizzeria'];
+    }
+    
+    // Règles pour les commandes
+    match /orders/{orderId} {
+      // Les clients peuvent lire leurs propres commandes
+      // Les admins et pizzerias peuvent lire toutes les commandes
+      allow read: if request.auth != null && (
+        (resource != null && resource.data.user_id == request.auth.uid) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'pizzeria'])
+      );
+      
+      // Les clients peuvent créer leurs propres commandes
+      allow create: if request.auth != null && 
+        request.resource.data.user_id == request.auth.uid;
+      
+      // Seuls les admins et pizzerias peuvent modifier les commandes (statut)
+      allow update: if request.auth != null && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'pizzeria'];
+      
+      // Seuls les admins peuvent supprimer des commandes
+      allow delete: if request.auth != null && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    
+    // Règles pour les paramètres de la pizzeria
+    match /settings/{settingId} {
+      // Tout le monde peut lire les paramètres (pour afficher les infos de contact)
+      allow read: if true;
+      
+      // Seuls les admins et pizzerias peuvent modifier les paramètres
+      allow write: if request.auth != null && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'pizzeria'];
+    }
+  }
+}
