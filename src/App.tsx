@@ -25,6 +25,8 @@ import { Privacy } from './pages/Privacy';
 import { Admin } from './pages/Admin';
 import { Cave } from './pages/Cave';
 import { PaymentSuccess } from './pages/PaymentSuccess';
+import ChatFab from './components/ChatFab';
+import ChatBot from './components/ChatBot';
 
 function MainContent() {
   const location = useLocation();
@@ -73,6 +75,7 @@ import { useOrderStore } from './stores/orderStore';
 
 function App() {
   const [isCartOpen, setIsCartOpen] = useState(false);
+  const [isChatOpen, setIsChatOpen] = useState(false);
   const { user } = useAuth();
   const { initPromotionsListener, initExtrasListener } = useCartStore();
   const { initSettings } = useSettingsStore();
@@ -113,6 +116,8 @@ function App() {
         <Footer />
         <CartModal isOpen={isCartOpen} onClose={() => setIsCartOpen(false)} />
         <BrandingFooter />
+        <ChatFab onOpen={() => setIsChatOpen(true)} isOpen={isChatOpen} />
+        <ChatBot isOpen={isChatOpen} onClose={() => setIsChatOpen(false)} />
       </div>
     </BrowserRouter>
   );
