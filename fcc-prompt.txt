@@ -1,0 +1,93 @@
+Tu es un expert Three.js/React. Tu dois corriger le fichier src/components/TalkingHead3D.tsx dans /root/expressao-da-uva.
+
+## Contexte
+- Projet: Expressão da Uva, chatbot sommelier avec avatar 3D parlant "Luis"
+- Le modele FBX est dans /public/model.fbx (9.1MB, Kaydara binary format 7400)
+- Contient des morph targets: jawOpen, eyeBlink (plusieurs occurrences)
+- Le fichier a ete modifie recemment mais le cadrage est perdu
+- Les helpers de debug (GridHelper, AxesHelper) ont ete ajoutes mais ne doivent PAS etre dans la version finale
+
+## Probleme
+L'utilisateur voit un cadre noir. Le modele FBX ne s'affiche pas correctement a cause du mauvais cadrage camera + scale.
+
+## Solution attendue - APPROCHE PROUVEE
+
+### 1. Fallback sphere IMMEDIAT (sans attendre le chargement FBX)
+Ajouter une sphere orange a la scene des le depart pour confirmer que Three.js rend:
+```typescript
+const fallbackGeom = new THREE.SphereGeometry(0.3, 16, 16);
+const fallbackMat = new THREE.MeshStandardMaterial({ color: 0xff8800, emissive: 0xff4400, emissiveIntensity: 0.5 });
+const sphere = new THREE.Mesh(fallbackGeom, fallbackMat);
+sphere.position.set(0, 0.5, 0);
+scene.add(sphere);
+// Supprimer dans le callback load
+```
+
+### 2. Camera + cadrage (PROUVE FONCTIONNEL)
+```typescript
+const camera = new THREE.PerspectiveCamera(35, w/h, 0.01, 100);
+camera.position.set(0, 0.5, 3.5);
+```
+
+### 3. Auto-scale + centrage (PROUVE FONCTIONNEL)
+```typescript
+fbx.updateMatrixWorld(true);
+const box = new THREE.Box3().setFromObject(fbx);
+const size = box.getSize(new THREE.Vector3());
+const maxDim = Math.max(size.x, size.y, size.z);
+const scaleFactor = maxDim > 0 ? 1.8 / maxDim : 0.01;
+fbx.scale.setScalar(scaleFactor);
+
+// Centrage correct:
+const newBox = new THREE.Box3().setFromObject(fbx);
+const center = newBox.getCenter(new THREE.Vector3());
+fbx.position.set(-center.x * scaleFactor, -center.y * scaleFactor + 0.7, -center.z * scaleFactor);
+```
+
+### 4. Camera face zoom (PROUVE FONCTIONNEL)
+Apres avoir centre le modele, ajuster camera pour viser le visage:
+```typescript
+const scaledBox = new THREE.Box3().setFromObject(fbx);
+const scaledCenter = scaledBox.getCenter(new THREE.Vector3());
+const scaledSize = scaledBox.getSize(new THREE.Vector3());
+const faceY = scaledCenter.y + scaledSize.y * 0.42;
+camera.position.set(0, faceY, 1.3);
+controls.target.set(0, faceY + 0.05, 0);
+controls.minDistance = 0.3;
+controls.maxDistance = 4;
+```
+
+### 5. Pas de helpers de debug (GridHelper, AxesHelper)
+Les helpers confondent l'utilisateur. Ne PAS les inclure.
+
+### 6. Lights
+```typescript
+const ambient = new THREE.AmbientLight(0xffccaa, 0.6);
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+dirLight.position.set(2, 3, 4);
+const hemiLight = new THREE.HemisphereLight(0xffffff, 0x443322, 0.4);
+```
+
+### 7. Animation labiale + TTS (Web Speech API)
+- onboundary word events → jawOpen spike
+- Entre les mots: decay intensity
+- Trois couches d'oscillation (flutter, slow wave, breath)
+- simulatedSpeakingRef fallback si TTS echoue
+
+### 8. Clignement yeux (eyeBlink morph targets)
+- Toutes les 3-5 secondes
+- Detection par regex /jaw|mouth/i pour jawOpen, /blink|eye/i pour eyeBlink
+
+### 9. Import path
+Utiliser `import { FBXLoader } from 'three-stdlib'` — PAS from 'three/examples/jsm/'
+
+## Fichier a modifier
+/root/expressao-da-uva/src/components/TalkingHead3D.tsx
+
+Ecrase le fichier complet avec l'implementation correcte. Assure-toi que:
+- Le build passe (npm run build)
+- Scene.background = 0x2a1a0e (fond marron)
+- Fichier FBX charge depuis /model.fbx
+- Statut badge "Carregar modelo...", "Pronto", "Erro..."
+- Bouton "Ouvir Luis" / "Parar" en bas de l'avatar
+- Le composant accepte les props: text, lang, autoSpeak, onSpeakingChange

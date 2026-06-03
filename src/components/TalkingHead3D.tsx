@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
+import { FBXLoader, OrbitControls } from 'three-stdlib';
 
 interface TalkingHeadProps {
   text: string;
@@ -10,338 +9,550 @@ interface TalkingHeadProps {
   onSpeakingChange?: (speaking: boolean) => void;
 }
 
-export default function TalkingHead3D({ text, lang='pt-PT', autoSpeak=false, onSpeakingChange }: TalkingHeadProps) {
+type LoadStatus = 'loading' | 'ready' | 'error';
+
+function clamp(val: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, val));
+}
+
+export default function TalkingHead3D({
+  text,
+  lang = 'pt-PT',
+  autoSpeak = false,
+  onSpeakingChange,
+}: TalkingHeadProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [status, setStatus] = useState('A preparar...');
-  const [mode, setMode] = useState<'idle'|'talking'>('idle');
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [status, setStatus] = useState<string>('Carregar modelo...');
+  const [loadStatus, setLoadStatus] = useState<LoadStatus>('loading');
+  const [isSpeaking, setIsSpeaking] = useState(false);
 
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
-  const fbxGroupRef = useRef<THREE.Group | null>(null);
-  const animRef = useRef(0);
+  const fbxRef = useRef<THREE.Group | null>(null);
+  const animFrameRef = useRef(0);
 
-  const morphNames = useRef<Record<string, number>>({});
+  // Morph target refs
+  const meshesWithMorphs = useRef<THREE.SkinnedMesh[]>([]);
+  const morphMap = useRef<{
+    jawOpen: { mesh: THREE.SkinnedMesh; index: number } | null;
+    eyeBlinkLeft: { mesh: THREE.SkinnedMesh; index: number } | null;
+    eyeBlinkRight: { mesh: THREE.SkinnedMesh; index: number } | null;
+  }>({ jawOpen: null, eyeBlinkLeft: null, eyeBlinkRight: null });
+
+  // Lip sync state
+  const isSpeakingRef = useRef(false);
   const speechIntensity = useRef(0);
   const lipPhase = useRef(0);
-  const isSpeakingRef = useRef(false);
-  const blinkCounter = useRef(0);
+  const lastBoundaryTime = useRef(0);
+  const simulatedSpeaking = useRef(false);
+  const speakTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const simEndTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Blink
+  const blinkTimer = useRef(0);
   const isBlinking = useRef(false);
-  const animTime = useRef(0);
+  const blinkProgress = useRef(0);
+  const currentBlinkL = useRef(0);
+  const currentBlinkR = useRef(0);
+
+  // Idle
+  const idleTime = useRef(0);
+  const fbxBaseY = useRef(0);
+
+  // Current smooth jaw
+  const currentJaw = useRef(0);
+
+  const setIsSpeakingState = useRef(setIsSpeaking);
+  setIsSpeakingState.current = setIsSpeaking;
+  const onSpeakingChangeRef = useRef(onSpeakingChange);
+  onSpeakingChangeRef.current = onSpeakingChange;
 
   const speak = useCallback(() => {
     if (!window.speechSynthesis || !text) return;
     window.speechSynthesis.cancel();
+
     const u = new SpeechSynthesisUtterance(text);
-    u.lang = lang; u.rate = 1.05;
+    u.lang = lang;
+    u.rate = 1.05;
+
     u.onstart = () => {
       isSpeakingRef.current = true;
-      setMode('talking');
-      onSpeakingChange?.(true);
-      speechIntensity.current = 0.5;
+      setIsSpeakingState.current(true);
+      onSpeakingChangeRef.current?.(true);
+      speechIntensity.current = 0.65;
       lipPhase.current = 0;
+      console.log('[TalkingHead3D] Speech started, intensity=0.65');
     };
-    u.onboundary = (_e: SpeechSynthesisEvent) => {
-      if (_e.name === 'word') {
-        speechIntensity.current = 0.7 + Math.random() * 0.3;
-        lipPhase.current += 0.5 + Math.random();
+
+    u.onboundary = (e: SpeechSynthesisEvent) => {
+      if (e.name === 'word') {
+        speechIntensity.current = 0.75 + Math.random() * 0.25;
+        lipPhase.current += 0.5 + Math.random() * 0.5;
+        lastBoundaryTime.current = performance.now();
       }
     };
+
     u.onend = () => {
       isSpeakingRef.current = false;
+      setIsSpeakingState.current(false);
+      onSpeakingChangeRef.current?.(false);
       speechIntensity.current = 0;
-      setMode('idle');
-      onSpeakingChange?.(false);
     };
-    u.onerror = () => { isSpeakingRef.current = false; setMode('idle'); };
+
+    u.onerror = () => {
+      isSpeakingRef.current = false;
+      setIsSpeakingState.current(false);
+      onSpeakingChangeRef.current?.(false);
+      speechIntensity.current = 0;
+    };
+
     window.speechSynthesis.speak(u);
-  }, [text, lang, onSpeakingChange]);
+  }, [text, lang]);
 
   const stop = useCallback(() => {
     window.speechSynthesis.cancel();
     isSpeakingRef.current = false;
-    setMode('idle');
-    onSpeakingChange?.(false);
-  }, [onSpeakingChange]);
+    setIsSpeakingState.current(false);
+    onSpeakingChangeRef.current?.(false);
+    speechIntensity.current = 0;
+    simulatedSpeaking.current = false;
+  }, []);
 
+  const handleSpeakToggle = useCallback(() => {
+    if (isSpeakingRef.current || simulatedSpeaking.current) {
+      stop();
+    } else {
+      speak();
+    }
+  }, [speak, stop]);
+
+  // Auto-speak when text changes
   useEffect(() => {
-    if (!text || !autoSpeak) return;
-    const t = setTimeout(() => speak(), 400);
-    return () => clearTimeout(t);
-  }, [text, autoSpeak, speak]);
+    if (speakTimeoutRef.current) clearTimeout(speakTimeoutRef.current);
+    if (simEndTimeoutRef.current) clearTimeout(simEndTimeoutRef.current);
+    if (!text || !autoSpeak || loadStatus !== 'ready') return;
 
-  function createFallbackHead(scene: THREE.Scene) {
-    const group = new THREE.Group();
-    const headMat = new THREE.MeshStandardMaterial({ color: 0xdeb887, roughness: 0.5 });
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.85, 32, 32), headMat);
-    head.position.y = 1.7;
-    group.add(head);
+    // Simulated speaking fallback (in case TTS fails silently)
+    simulatedSpeaking.current = true;
+    speechIntensity.current = 0.5;
+    setIsSpeakingState.current(true);
+    onSpeakingChangeRef.current?.(true);
 
-    const eyeMat = new THREE.MeshStandardMaterial({ color: 0x000000 });
-    const eyeGeo = new THREE.SphereGeometry(0.08, 16, 16);
-    const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
-    eyeL.position.set(-0.25, 1.85, -0.8);
-    group.add(eyeL);
-    const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
-    eyeR.position.set(0.25, 1.85, -0.8);
-    group.add(eyeR);
+    simEndTimeoutRef.current = setTimeout(() => {
+      simulatedSpeaking.current = false;
+      if (!isSpeakingRef.current) {
+        setIsSpeakingState.current(false);
+        onSpeakingChangeRef.current?.(false);
+      }
+    }, 3500);
 
-    const mouth = new THREE.Mesh(
-      new THREE.SphereGeometry(0.12, 16, 8),
-      new THREE.MeshStandardMaterial({ color: 0xcc4444 })
-    );
-    mouth.position.set(0, 1.55, -0.85);
-    mouth.scale.y = 0.3;
-    mouth.name = 'mouth';
-    group.add(mouth);
+    speakTimeoutRef.current = setTimeout(() => {
+      speak();
+    }, 200);
 
-    const body = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.5, 0.7, 1.0, 16),
-      new THREE.MeshStandardMaterial({ color: 0x3a3a3a, roughness: 0.8 })
-    );
-    body.position.y = 0.5;
-    group.add(body);
+    return () => {
+      if (speakTimeoutRef.current) clearTimeout(speakTimeoutRef.current);
+      if (simEndTimeoutRef.current) clearTimeout(simEndTimeoutRef.current);
+      if (!isSpeakingRef.current) simulatedSpeaking.current = false;
+    };
+  }, [text, autoSpeak, speak, loadStatus, onSpeakingChange]);
 
-    scene.add(group);
-    setStatus('Modo alternativo');
-  }
-
+  // Three.js scene
   useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
+    if (!containerRef.current) return;
 
-    const w = el.clientWidth || 340;
-    const h = el.clientHeight || 380;
+    const container = containerRef.current;
+    const w = container.clientWidth || 400;
+    const h = container.clientHeight || 500;
 
-    setStatus('Iniciando 3D...');
-
+    // Scene
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x2a1a0e);
     sceneRef.current = scene;
 
-    const camera = new THREE.PerspectiveCamera(30, w/h, 0.01, 100);
-    camera.position.set(0, 1.8, 4.0);
+    // Camera
+    const camera = new THREE.PerspectiveCamera(35, w / h, 0.01, 100);
+    camera.position.set(0, 0.5, 3.5);
     cameraRef.current = camera;
 
-    let renderer: THREE.WebGLRenderer;
-    try {
-      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-    } catch {
-      setStatus('WebGL indisponivel');
-      return;
-    }
+    // Renderer
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     renderer.setSize(w, h);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.5;
-    el.appendChild(renderer.domElement);
+    renderer.toneMappingExposure = 1.2;
+    container.appendChild(renderer.domElement);
+    canvasRef.current = renderer.domElement;
     rendererRef.current = renderer;
 
-    const ctrl = new OrbitControls(camera, renderer.domElement);
-    ctrl.enableDamping = true;
-    ctrl.dampingFactor = 0.06;
-    ctrl.minDistance = 1.5;
-    ctrl.maxDistance = 8;
-    ctrl.target.set(0, 1.8, 0);
-    controlsRef.current = ctrl;
+    // Controls
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.target.set(0, 0.5, 0);
+    controls.minDistance = 0.3;
+    controls.maxDistance = 10;
+    controls.update();
+    controlsRef.current = controls;
 
     // Lights
-    scene.add(new THREE.AmbientLight(0xffffff, 0.8));
-    const key = new THREE.DirectionalLight(0xffeedd, 3.0); key.position.set(3, 4, 5); scene.add(key);
-    const fill = new THREE.DirectionalLight(0x8888ff, 1.5); fill.position.set(-3, 2, 4); scene.add(fill);
-    const rim = new THREE.DirectionalLight(0xffffff, 2.0); rim.position.set(0, 2, -6); scene.add(rim);
-    const top = new THREE.DirectionalLight(0xffffff, 1.0); top.position.set(0, 6, 0); scene.add(top);
+    const ambient = new THREE.AmbientLight(0xffccaa, 0.6);
+    scene.add(ambient);
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+    dirLight.position.set(2, 3, 4);
+    scene.add(dirLight);
+
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x443322, 0.4);
+    scene.add(hemiLight);
+
+    // Fallback sphere (immediate visual feedback)
+    const sphereGeom = new THREE.SphereGeometry(0.3, 16, 16);
+    const sphereMat = new THREE.MeshStandardMaterial({
+      color: 0xff8800,
+      emissive: 0xff4400,
+      emissiveIntensity: 0.5,
+    });
+    const fallbackSphere = new THREE.Mesh(sphereGeom, sphereMat);
+    fallbackSphere.position.set(0, 0.5, 0);
+    scene.add(fallbackSphere);
 
     // Load FBX
     const loader = new FBXLoader();
-    let fallbackUsed = false;
+    console.log('[TalkingHead3D] Loading FBX...');
 
+    // @ts-ignore - FBXLoader types incomplete for progress/error callbacks
     loader.load(
-      '/model.fbx',
-      (fbx: THREE.Group) => {
-        console.log('[TalkingHead3D] FBX loaded');
-        setStatus('A processar...');
+    '/model.fbx',
+    // @ts-ignore
+    (fbx: any) => {
+    console.log('[TalkingHead3D] FBX loaded, traversing children...');
 
-        const box = new THREE.Box3().setFromObject(fbx);
-        const size = box.getSize(new THREE.Vector3());
-        const center = box.getCenter(new THREE.Vector3());
-        const maxDim = Math.max(size.x, size.y, size.z);
+    // Force all materials to be visible - FBX material import often fails
+    fbx.traverse((child: THREE.Object3D) => {
+      if ((child as THREE.Mesh).isMesh) {
+        const mesh = child as THREE.Mesh;
+        const origMat = mesh.material;
+        const mats = Array.isArray(origMat) ? origMat : [origMat];
+        const newMats = mats.map((mat: THREE.Material) => {
+          // If it's StandardMaterial with no map, just make it visible
+          if (mat.type === 'MeshStandardMaterial' || mat.type === 'MeshPhongMaterial') {
+            const m = mat as THREE.MeshStandardMaterial;
+            console.log('[TalkingHead3D] Mesh', mesh.name, 'material type:', mat.type, 'color:', m.color?.getHexString(), 'map:', !!m.map, 'alphaMap:', !!m.alphaMap);
+            // If color is black or very dark, override
+            if (!m.map) {
+              if (m.color && m.color.getHex() <= 0x222222) {
+                console.log('[TalkingHead3D] Overriding dark material on', mesh.name);
+                m.color.setHex(0xcc9966);
+              }
+            }
+            m.needsUpdate = true;
+            m.side = THREE.DoubleSide;
+            return m;
+          }
+          // Unknown material type - replace with visible one
+          console.log('[TalkingHead3D] Unknown material type on', mesh.name, ':', mat.type);
+          const newMat = new THREE.MeshStandardMaterial({
+            color: 0xcc9966,
+            roughness: 0.5,
+            metalness: 0.0,
+            side: THREE.DoubleSide,
+          });
+          return newMat;
+        });
+        mesh.material = mats.length > 1 ? newMats as THREE.Material[] : newMats[0] as THREE.Material;
+        mesh.frustumCulled = false;
+        console.log('[TalkingHead3D] Processed mesh:', mesh.name, 'geometry:', mesh.geometry?.type);
+      }
+    });
 
-        console.log(`[TalkingHead3D] Size: ${size.x.toFixed(3)} x ${size.y.toFixed(3)} x ${size.z.toFixed(3)}`);
-        console.log(`[TalkingHead3D] Center: (${center.x.toFixed(3)}, ${center.y.toFixed(3)}, ${center.z.toFixed(3)})`);
+    // Remove fallback sphere
+    scene.remove(fallbackSphere);
+    sphereGeom.dispose();
+    sphereMat.dispose();
 
-        // Scale so model is ~1.8 units tall (head + shoulders)
-        const targetHeight = 1.8;
-        const scale = maxDim > 0.001 ? targetHeight / maxDim : 1;
-        fbx.scale.setScalar(scale);
-        fbx.updateMatrixWorld(true);
+    // Auto-scale
+    fbx.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(fbx);
+    const size = box.getSize(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z);
+    const scaleFactor = maxDim > 0 ? 1.8 / maxDim : 0.01;
+    console.log('[TalkingHead3D] FBX size:', size.x.toFixed(3), size.y.toFixed(3), size.z.toFixed(3), 'scale:', scaleFactor);
 
-        const box2 = new THREE.Box3().setFromObject(fbx);
-        const ctr2 = box2.getCenter(new THREE.Vector3());
-        const sz2 = box2.getSize(new THREE.Vector3());
+    fbx.scale.setScalar(scaleFactor);
+    fbx.updateMatrixWorld(true);
 
-        console.log(`[TalkingHead3D] Scaled size: ${sz2.y.toFixed(3)}, center y: ${ctr2.y.toFixed(3)}`);
+    // Center after scaling - put the head at camera center
+    const newBox = new THREE.Box3().setFromObject(fbx);
+    const center = newBox.getCenter(new THREE.Vector3());
+    const scaledSize = newBox.getSize(new THREE.Vector3());
+    const headOffset = scaledSize.y * 0.60;
+    fbx.position.set(-center.x, -center.y + headOffset, -center.z);
+    fbx.updateMatrixWorld(true);
 
-        // Center horizontally, position vertically so model sits at y≈1.8
-        fbx.position.set(-ctr2.x, -ctr2.y + 1.8, -ctr2.z);
-        fbx.updateMatrixWorld(true);
+    console.log('[TalkingHead3D] After center - pos:', fbx.position.x.toFixed(3), fbx.position.y.toFixed(3), fbx.position.z.toFixed(3), 'headOffset:', headOffset.toFixed(3));
+    console.log('[TalkingHead3D] Scaled size:', scaledSize.x.toFixed(3), scaledSize.y.toFixed(3), scaledSize.z.toFixed(3));
 
-        scene.add(fbx);
-        fbxGroupRef.current = fbx;
+    // Recompute bounding box AFTER position offset
+    fbx.updateMatrixWorld(true);
+    const finalBox = new THREE.Box3().setFromObject(fbx);
+    const finalCenter = finalBox.getCenter(new THREE.Vector3());
+    const finalSize = finalBox.getSize(new THREE.Vector3());
+    const headY = finalCenter.y + finalSize.y * 0.30;
+    console.log('[TalkingHead3D] Final center:', finalCenter.y.toFixed(3), 'size:', finalSize.y.toFixed(3), 'headY:', headY.toFixed(3));
+
+    // Face zoom
+    camera.position.set(0, headY, 1.3);
+    controls.target.set(0, headY + 0.02, 0);
+    controls.minDistance = 0.3;
+    controls.maxDistance = 4;
+    controls.update();
 
         // Detect morph targets
-        const morphMap: Record<string, number> = {};
+        const found: THREE.SkinnedMesh[] = [];
         fbx.traverse((child: THREE.Object3D) => {
-          const mesh = child as THREE.Mesh;
-          if (!mesh.isMesh || !mesh.geometry) return;
-          const g = mesh.geometry;
-          if (!g.morphAttributes?.position) return;
-          for (let i = 0; i < g.morphAttributes.position.length; i++) {
-            const name = (g.morphTargets?.[i]?.name || `t${i}`).toLowerCase();
-            morphMap[name] = i;
+          if ((child as THREE.SkinnedMesh).isSkinnedMesh && (child as THREE.SkinnedMesh).morphTargetDictionary) {
+            const mesh = child as THREE.SkinnedMesh;
+            const morphNames = Object.keys(mesh.morphTargetDictionary);
+            const morphInfluences = mesh.morphTargetInfluences;
+            console.log('[TalkingHead3D] ===== SkinnedMesh:', mesh.name, '=====');
+            console.log('[TalkingHead3D]   morph count:', morphNames.length);
+            console.log('[TalkingHead3D]   influences array length:', morphInfluences ? morphInfluences.length : 'null');
+            morphNames.forEach((n, i) => {
+              console.log('[TalkingHead3D]   morph[' + i + '] =', n);
+            });
+            found.push(mesh);
+
+            for (const [name, idx] of Object.entries(mesh.morphTargetDictionary)) {
+              const kl = (name as string).toLowerCase();
+              if (/jaw|mouth/.test(kl)) {
+                // If we already have a jawOpen from a previous mesh, keep the first
+                // or if we want to aggregate, we'll handle multiple
+                if (morphMap.current.jawOpen && morphMap.current.jawOpen.mesh !== mesh) {
+                  // Multiple meshes have jaw morphs -- log all
+                  console.log('[TalkingHead3D] Additional jaw morph on mesh', mesh.name, ':', name, 'index', idx);
+                }
+                morphMap.current.jawOpen = { mesh, index: idx as number };
+                console.log('[TalkingHead3D] jawOpen SET:', name, 'index', idx, 'on mesh', mesh.name);
+              }
+              if (/blink/.test(kl) && /left/.test(kl)) {
+                morphMap.current.eyeBlinkLeft = { mesh, index: idx as number };
+                console.log('[TalkingHead3D] eyeBlinkLeft SET:', name, 'index', idx, 'on mesh', mesh.name);
+              }
+              if (/blink/.test(kl) && /right/.test(kl)) {
+                morphMap.current.eyeBlinkRight = { mesh, index: idx as number };
+                console.log('[TalkingHead3D] eyeBlinkRight SET:', name, 'index', idx, 'on mesh', mesh.name);
+              }
+            }
+
+            if (mesh.material) {
+              const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+              mats.forEach((mat: THREE.Material) => {
+                if ('needsUpdate' in mat) mat.needsUpdate = true;
+              });
+            }
+
+            mesh.frustumCulled = false;
           }
         });
 
-        console.log('[TalkingHead3D] Morphs:', Object.keys(morphMap).join(', '));
+        meshesWithMorphs.current = found;
+        console.log('[TalkingHead3D] Total morph meshes:', found.length);
 
-        const mt = morphNames.current;
-        for (const [name, idx] of Object.entries(morphMap)) {
-          if (name.includes('jaw') || name.includes('open') || name.includes('mouth')) {
-            mt.jawOpen = idx;
-          } else if (name.includes('blink') || name.includes('eye')) {
-            if (name.includes('l') && !name.includes('r')) mt.eyeBlinkL = idx;
-            else if (name.includes('r') && !name.includes('l')) mt.eyeBlinkR = idx;
-            else { mt.eyeBlinkL ??= idx; mt.eyeBlinkR ??= idx; }
-          }
-        }
+        scene.add(fbx);
+        fbxRef.current = fbx;
+        fbxBaseY.current = fbx.position.y;
 
-        // Fallback: assign by index order
-        if (mt.jawOpen === undefined && Object.keys(morphMap).length > 0) {
-          const sorted = Object.entries(morphMap).sort((a, b) => a[1] - b[1]);
-          mt.jawOpen = sorted[0][1];
-          if (sorted.length > 1) mt.eyeBlinkL = sorted[1][1];
-          if (sorted.length > 2) mt.eyeBlinkR = sorted[2][1];
-        }
-
-        console.log('[TalkingHead3D] Mapping:', mt);
-
-        // Init morph arrays
-        fbx.traverse((child: THREE.Object3D) => {
-          const mesh = child as THREE.Mesh;
-          if (!mesh.isMesh || !mesh.geometry?.morphAttributes?.position) return;
-          mesh.morphTargetInfluences = new Array(mesh.geometry.morphAttributes.position.length).fill(0);
-        });
-
-        setStatus('Luis pronto');
+        setStatus('Pronto');
+        setLoadStatus('ready');
+        console.log('[TalkingHead3D] Ready');
       },
-      (xhr: { loaded: number; total: number }) => {
-        if (xhr.total > 0) {
-          const pct = Math.round((xhr.loaded / xhr.total) * 100);
-          if (pct % 25 === 0) setStatus(`Carregando ${pct}%`);
+      (progress: any) => {
+        if (progress.total > 0) {
+          const pct = Math.round((progress.loaded / progress.total) * 100);
+          setStatus(`Carregar modelo... ${pct}%`);
         }
       },
-      (_err: unknown) => {
-        console.error('[TalkingHead3D] FBX error:', _err);
-        setStatus('Erro FBX');
-        fallbackUsed = true;
-        createFallbackHead(scene);
+      (error: any) => {
+        console.error('[TalkingHead3D] FBX error:', error);
+        setStatus('Erro ao carregar modelo');
+        setLoadStatus('error');
       }
     );
 
+    // Animation loop
     function animate() {
-      animRef.current = requestAnimationFrame(animate);
+      animFrameRef.current = requestAnimationFrame(animate);
+      idleTime.current += 0.016;
+
+      const speaking = isSpeakingRef.current || simulatedSpeaking.current;
+
+      // Lip sync - direct jawOpen morph animation with speech event response
+      if (speaking) {
+        // Decay intensity naturally between word boundaries
+        speechIntensity.current *= 0.97;
+        const intensity = Math.max(0.05, speechIntensity.current);
+
+        // Update phase for subtle modulation (not sine wave oscillation)
+        lipPhase.current += 0.03 + intensity * 0.06;
+
+        // On word boundaries, intensity spikes to 0.7-1.0 (set in onboundary)
+        // Base open mouth during speech: 0.3
+        // Add intensity-driven opening: intensity * 0.5
+        // Add subtle pseudo-noise modulation instead of raw sine
+        const noiseMod = Math.sin(lipPhase.current * 4.7) * 0.08 + Math.sin(lipPhase.current * 7.3) * 0.05;
+        const target = clamp(0.30 + intensity * 0.50 + noiseMod, 0, 1);
+
+        // Fast attack (0.35) for responsiveness, slower decay (0.25) handled by intensity fade
+        currentJaw.current += (target - currentJaw.current) * 0.35;
+
+        if (morphMap.current.jawOpen) {
+          const { mesh, index } = morphMap.current.jawOpen;
+          if (mesh.morphTargetInfluences) {
+            mesh.morphTargetInfluences[index] = currentJaw.current;
+            // Log morph influence periodically for debugging
+            if (Math.random() < 0.02) {
+              console.log('[TalkingHead3D] jawOpen influence:', currentJaw.current.toFixed(3), 'intensity:', intensity.toFixed(3));
+            }
+          }
+        }
+      } else {
+        // Smoothly close mouth when not speaking
+        if (currentJaw.current > 0.001) {
+          currentJaw.current += (0 - currentJaw.current) * 0.12;
+        } else {
+          currentJaw.current = 0;
+        }
+        if (morphMap.current.jawOpen) {
+          const { mesh, index } = morphMap.current.jawOpen;
+          if (mesh.morphTargetInfluences) {
+            mesh.morphTargetInfluences[index] = currentJaw.current;
+          }
+        }
+      }
+
+      // Idle breathing
+      if (fbxRef.current) {
+        const breathY = Math.sin(idleTime.current * 1.5) * 0.001;
+        const breathRot = Math.sin(idleTime.current * 0.7) * 0.003;
+        fbxRef.current.position.y = fbxBaseY.current + breathY;
+        fbxRef.current.rotation.x += breathRot - fbxRef.current.rotation.x * 0.05;
+      }
 
       // Blink
-      blinkCounter.current++;
-      if (!isBlinking.current && blinkCounter.current > 180 + Math.random() * 120) {
+      blinkTimer.current += 1;
+      if (!isBlinking.current && blinkTimer.current > 180 + Math.random() * 120) {
         isBlinking.current = true;
-        blinkCounter.current = 0;
-      }
-      if (isBlinking.current && blinkCounter.current > 4) {
-        isBlinking.current = false;
+        blinkTimer.current = 0;
+        blinkProgress.current = 0;
       }
 
-      const fb = fbxGroupRef.current;
-      if (fb && !fallbackUsed) {
-        fb.traverse((child: THREE.Object3D) => {
-          const mesh = child as THREE.Mesh;
-          if (!mesh.isMesh || !mesh.geometry?.morphAttributes?.position) return;
-          const inf = mesh.morphTargetInfluences || [];
-          const mt = morphNames.current;
+      if (isBlinking.current) {
+        blinkProgress.current += 0.12;
+        const bv = blinkProgress.current < 0.5
+          ? blinkProgress.current * 2
+          : 2 - blinkProgress.current * 2;
+        const smoothB = clamp(bv, 0, 1);
 
-          if (mt.eyeBlinkL !== undefined) inf[mt.eyeBlinkL] = isBlinking.current ? 1 : 0;
-          if (mt.eyeBlinkR !== undefined) inf[mt.eyeBlinkR] = isBlinking.current ? 1 : 0;
-
-          if (mt.jawOpen !== undefined) {
-            speechIntensity.current *= 0.985;
-            const intensity = Math.max(0, Math.min(1, speechIntensity.current));
-            const active = isSpeakingRef.current;
-            lipPhase.current += 0.03 + intensity * 0.03;
-            let jawVal = 0.02;
-            if (active) {
-              const osc = Math.sin(lipPhase.current * 8) * 0.25;
-              jawVal = 0.1 + intensity * 0.6 + osc * 0.25;
-            }
-            inf[mt.jawOpen] = Math.min(jawVal, 1.0);
+        if (morphMap.current.eyeBlinkLeft) {
+          const { mesh, index } = morphMap.current.eyeBlinkLeft;
+          if (mesh.morphTargetInfluences) {
+            currentBlinkL.current += (smoothB - currentBlinkL.current) * 0.4;
+            mesh.morphTargetInfluences[index] = currentBlinkL.current;
           }
-
-          mesh.morphTargetInfluences = inf;
-        });
-
-        // Breathing
-        animTime.current += 0.01;
-        fb.position.y += Math.sin(animTime.current * 1.5) * 0.0005;
-      } else if (fallbackUsed) {
-        scene.traverse((child: THREE.Object3D) => {
-          if (child.name === 'mouth') {
-            const active = isSpeakingRef.current;
-            const target = active ? 0.5 + Math.sin(Date.now() * 0.01) * 0.3 : 0.3;
-            child.scale.y += (target - child.scale.y) * 0.1;
+        }
+        if (morphMap.current.eyeBlinkRight) {
+          const { mesh, index } = morphMap.current.eyeBlinkRight;
+          if (mesh.morphTargetInfluences) {
+            currentBlinkR.current += (smoothB - currentBlinkR.current) * 0.4;
+            mesh.morphTargetInfluences[index] = currentBlinkR.current;
           }
-        });
+        }
+
+        if (blinkProgress.current >= 1) {
+          isBlinking.current = false;
+          if (morphMap.current.eyeBlinkLeft) {
+            const { mesh, index } = morphMap.current.eyeBlinkLeft;
+            if (mesh.morphTargetInfluences) mesh.morphTargetInfluences[index] = 0;
+          }
+          if (morphMap.current.eyeBlinkRight) {
+            const { mesh, index } = morphMap.current.eyeBlinkRight;
+            if (mesh.morphTargetInfluences) mesh.morphTargetInfluences[index] = 0;
+          }
+          currentBlinkL.current = 0;
+          currentBlinkR.current = 0;
+        }
       }
 
-      ctrl.update();
+      controls.update();
       renderer.render(scene, camera);
     }
-    animRef.current = requestAnimationFrame(animate);
 
-    const resize = () => {
-      const cw = el.clientWidth || 340;
-      const ch = el.clientHeight || 380;
+    animFrameRef.current = requestAnimationFrame(animate);
+
+    // Resize
+    const handleResize = () => {
+      if (!containerRef.current) return;
+      const cw = containerRef.current.clientWidth;
+      const ch = containerRef.current.clientHeight;
       camera.aspect = cw / ch;
       camera.updateProjectionMatrix();
       renderer.setSize(cw, ch);
     };
-    window.addEventListener('resize', resize);
+    window.addEventListener('resize', handleResize);
 
     return () => {
-      cancelAnimationFrame(animRef.current);
-      window.removeEventListener('resize', resize);
+      window.speechSynthesis.cancel();
+      window.removeEventListener('resize', handleResize);
+      cancelAnimationFrame(animFrameRef.current);
+      controls.dispose();
       renderer.dispose();
-      el.innerHTML = '';
+      if (canvasRef.current && container.contains(canvasRef.current)) {
+        container.removeChild(canvasRef.current);
+      }
     };
   }, []);
 
   return (
     <div className="w-full h-full relative overflow-hidden rounded-2xl bg-[#2a1a0e]">
-      <div ref={containerRef} className="w-full h-full min-h-[300px] cursor-grab active:cursor-grabbing relative" />
-      <div className="absolute top-3 left-3 z-10 bg-black/60 backdrop-blur-sm px-3 py-1.5 rounded-full">
-        <span className="text-white/70 text-[10px]">{status}</span>
-      </div>
-      <div className="absolute bottom-3 left-0 right-0 flex items-center justify-center gap-3 z-20">
-        {mode === 'idle' ? (
-          <button onClick={speak} disabled={!text}
-            className="flex items-center gap-2 px-5 py-2 bg-[#111] text-white rounded-full hover:bg-[#333] active:scale-95 transition-all text-sm font-medium shadow-lg border border-[#C8A96E]/20 disabled:opacity-40">
-            Ouvir Luis
+      <div ref={containerRef} className="absolute inset-0" />
+
+      {/* Loading overlay */}
+      {loadStatus === 'loading' && (
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-[#2a1a0e]">
+          <div className="w-10 h-10 border-2 border-[#C8A96E] border-t-transparent rounded-full animate-spin mb-3" />
+          <span className="text-[#C8A96E]/70 text-xs">{status}</span>
+        </div>
+      )}
+
+      {loadStatus === 'error' && (
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-[#2a1a0e]">
+          <span className="text-red-400/80 text-xs">{status}</span>
+          <button onClick={() => window.location.reload()} className="mt-3 text-[#C8A96E] text-xs underline">
+            Tentar novamente
           </button>
-        ) : (
-          <button onClick={stop}
-            className="flex items-center gap-2 px-5 py-2 bg-[#8B5E3C] text-white rounded-full hover:bg-[#6f4d2e] active:scale-95 transition-all text-sm font-medium shadow-lg">
-            Parar
-          </button>
-        )}
+        </div>
+      )}
+
+      {/* Status badge */}
+      {loadStatus === 'ready' && (
+        <div className="absolute top-3 left-3 z-20 bg-black/50 text-white/80 rounded-full text-[10px] px-2 py-0.5">
+          {status}
+        </div>
+      )}
+
+      {/* Speak / Stop button */}
+      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20">
+        <button
+          onClick={handleSpeakToggle}
+          className="px-4 py-2 text-xs font-semibold rounded-full bg-white/10 text-white hover:bg-white/20 transition shadow-lg backdrop-blur-sm"
+        >
+          {isSpeakingRef.current || simulatedSpeaking.current ? 'Parar' : 'Ouvir Luis'}
+        </button>
       </div>
     </div>
   );
