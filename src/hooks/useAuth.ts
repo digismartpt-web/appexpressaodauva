@@ -26,13 +26,16 @@ export const useAuth = create<AuthState>((set, get) => ({
   initializeAuth: () => {
     // 1. Primeiro tentamos recuperar a sessão existente
     supabase.auth.getSession().then(({ data: { session } }) => {
+      console.log('[AUTH] getSession result:', session ? `user=${session.user.id}` : 'no session');
       if (session?.user) {
         get()._loadUserProfile(session.user.id, session.user.email);
       } else {
         // Tentativa de sessão anónima se não houver sessão ativa
-        console.log('👤 [Auth] Nenhum utilizador encontrado, a iniciar sessão anónima...');
-        supabase.auth.signInAnonymously().catch(error => {
-          console.error('❌ [Auth] Falha na ligação anónima:', error);
+        console.log('[AUTH] No session found, trying anonymous sign-in...');
+        supabase.auth.signInAnonymously().then(() => {
+          console.log('[AUTH] Anonymous sign-in initiated');
+        }).catch(error => {
+          console.error('[AUTH] Anonymous sign-in failed:', error);
           set({ user: null, loading: false });
         });
       }
@@ -40,11 +43,13 @@ export const useAuth = create<AuthState>((set, get) => ({
 
     // 2. Depois subscrevemos as mudanças de estado
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log('Auth state changed:', event, session?.user?.id || 'null');
+      console.log('[AUTH] onAuthStateChange event:', event, 'userId:', session?.user?.id || 'null', 'userEmail:', session?.user?.email || 'null');
       
       if (session?.user) {
+        console.log('[AUTH] Session found, loading profile for user:', session.user.id);
         get()._loadUserProfile(session.user.id, session.user.email);
       } else {
+        console.log('[AUTH] No session in onAuthStateChange, setting user=null');
         set({ user: null, loading: false });
       }
     });
@@ -55,8 +60,13 @@ export const useAuth = create<AuthState>((set, get) => ({
   },
 
   signIn: async (email, password) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) throw new Error(error.message || 'Email ou palavra-passes incorretos');
+    console.log('[AUTH] signIn called for email:', email);
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      console.error('[AUTH] signInWithPassword error:', error.message, error.code);
+      throw new Error(error.message || 'Email ou palavra-passes incorretos');
+    }
+    console.log('[AUTH] signInWithPassword SUCCESS - user:', data?.user?.id, 'session:', !!data?.session);
   },
 
   signUp: async (email, password, userData) => {
@@ -124,6 +134,7 @@ export const useAuth = create<AuthState>((set, get) => ({
   
   // Função utilitária interna para carregar o perfil a partir do supabase_auth_id
   _loadUserProfile: async (uid: string, email: string | undefined) => {
+    console.log('[AUTH] _loadUserProfile called for uid:', uid, 'email:', email);
     try {
       const { data: profile, error } = await supabase
         .from('users_profiles')
@@ -131,7 +142,10 @@ export const useAuth = create<AuthState>((set, get) => ({
         .eq('supabase_auth_id', uid)
         .maybeSingle();
 
+      console.log('[AUTH] _loadUserProfile query result - profile:', profile ? `found (role=${profile.role}, name=${profile.full_name})` : 'null/not found', 'error:', error?.message || 'none', 'errorCode:', error?.code || 'none');
+
       if (error && error.code !== 'PGRST116') {
+        console.error('[AUTH] _loadUserProfile unexpected error:', error);
         throw error;
       }
 
@@ -145,15 +159,17 @@ export const useAuth = create<AuthState>((set, get) => ({
           role: profile.role || 'client',
           created_at: profile.created_at
         };
+        console.log('[AUTH] Profile FOUND, setting user with role:', userData.role);
         set({ user: userData, loading: false });
       } else {
+        console.log('[AUTH] Profile NOT FOUND for uid:', uid, '- setting user=null (check users_profiles table for this supabase_auth_id)');
         // O perfil ainda não existe (pode acontecer para uma sessão anónima ainda não ativa ou nova conta)
         // ATENÇÃO: O trigger DB gere a criação automática para contas reais.
         // Para as sessões anónimas, pode haver um atraso ou comportamento diferente.
         set({ user: null, loading: false });
       }
     } catch (err) {
-      console.error('Erro ao carregar o perfil:', err);
+      console.error('[AUTH] Erro ao carregar o perfil:', err);
       set({ user: null, loading: false });
     }
   }

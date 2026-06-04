@@ -16,6 +16,9 @@ const dummySupabase = {
     getSession: () => Promise.resolve({ data: { session: null }, error: null }),
     getUser: () => Promise.resolve({ data: { user: null }, error: null }),
     signOut: () => Promise.resolve({ error: null }),
+    signInAnonymously: () => Promise.resolve({ data: { user: null, session: null }, error: null }),
+    signInWithPassword: () => Promise.resolve({ data: { user: null, session: null }, error: null }),
+    signUp: () => Promise.resolve({ data: { user: null }, error: null }),
   },
   from: () => ({
     select: () => ({

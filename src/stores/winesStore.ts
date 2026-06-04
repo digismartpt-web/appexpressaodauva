@@ -28,6 +28,21 @@ export const useWinesStore = create<WinesState>((set, get) => ({
 
     console.log('🔄 [WinesStore] Inicializando ouvintes globais do catálogo...');
 
+    // DIRECT FETCH FIRST — loads data immediately, no waiting for subscriptions
+    Promise.all([
+      winesService.getAllWines().then(wines => ({ wines, loading: false })),
+      winesService.getAllWinesForAdmin().then(allWines => ({ allWines })),
+      categoriesService.getAllCategories().then(categories => ({ categories })),
+      extrasService.getAllExtras().then(extras => ({ extras })),
+      extrasService.getAllExtrasForAdmin().then(allExtras => ({ allExtras })),
+    ]).then(results => {
+      set(Object.assign({}, ...results, { loading: false }));
+    }).catch(err => {
+      console.error('[WinesStore] Direct fetch error:', err);
+      set({ loading: false });
+    });
+
+    // Then also subscribe to realtime for live updates
     const unsubActiveWines = winesService.subscribeToActiveWines((wines) => {
       set({ wines, loading: false });
     });

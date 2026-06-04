@@ -29,6 +29,12 @@ export function Menu() {
     }
   }, [winesLoading]);
 
+  // Fallback: forcer l'affichage apres 5s meme si le store charge pas
+  useEffect(() => {
+    const t = setTimeout(() => setLoading(false), 5000);
+    return () => clearTimeout(t);
+  }, []);
+
   // Obter as categorias disponíveis (apenas as ativas)
   const getAvailableCategories = () => {
     if (activeCategories.length > 0) {

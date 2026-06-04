@@ -2,9 +2,8 @@ import { useState, useRef, useEffect } from 'react';
 import { CATALOGO, catalogoParaTexto } from '../data/wineCatalog';
 import AvatarLuis from './AvatarLuis';
 
-const API_KEY = import.meta.env.VITE_HERMES_API_KEY || 'hermes-api-key';
-const API_HOST = import.meta.env.VITE_HERMES_API_HOST || window.location.hostname;
-const API_URL = `http://${API_HOST}:8642/v1/chat/completions`;
+const FCC_HOST = import.meta.env.VITE_FCC_HOST || window.location.hostname;
+const FCC_URL = `http://${FCC_HOST}:8643/v1/chat/completions`;
 
 const MENSAGENS_ESPERA = [
   "Boa pergunta! Deixe-me verificar... 🍷",
@@ -67,11 +66,11 @@ CATÁLOGO:\n${catalogoParaTexto()}
 
 Respostas curtas e diretas, máximo 3 parágrafos.`;
 
-    const res = await fetch(API_URL, {
+    const res = await fetch(FCC_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${API_KEY}` },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'hermes-agent',
+        model: 'fcc-proxy',
         messages: [
           { role: 'system', content: systemPrompt },
           ...histRef.current,
