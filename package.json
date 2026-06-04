@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@googlemaps/js-api-loader": "^2.0.2",
+    "@met4citizen/talkinghead": "^1.7.0",
     "@supabase/supabase-js": "^2.100.1",
     "clsx": "^2.1.0",
     "framer-motion": "^11.0.8",
@@ -21,7 +22,7 @@
     "react-hot-toast": "^2.4.1",
     "react-router-dom": "^6.22.2",
     "tailwind-merge": "^2.2.1",
-    "three": "^0.184.0",
+    "three": "^0.180.0",
     "zustand": "^4.5.2"
   },
   "devDependencies": {
