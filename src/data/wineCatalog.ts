@@ -8,6 +8,10 @@ export interface Wine {
   harmoniza: string[];
 }
 
+export function catalogoParaTexto(): string {
+  return CATALOGO.map(w => `${w.nome} — ${w.preco}€`).join('\n');
+}
+
 export const CATALOGO: Wine[] = [
   // TINTOS
   { nome: "Herdade do Rocim Amphora", tipo: "tinto", regiao: "Alentejo, Portugal", uva: "Moreto", preco: 18, descricao: "Vinho fermentado em ânfora de barro, sem madeira. Muito mineral e fresco para um tinto alentejano.", harmoniza: ["carnes grelhadas", "caça", "queijos curados", "borrego"] },

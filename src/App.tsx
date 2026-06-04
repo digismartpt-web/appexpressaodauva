@@ -12,7 +12,8 @@ function ScrollToTop() {
 }
 import { Toaster } from 'react-hot-toast';
 import { Navbar } from './components/Navbar';
-import { ChatWidget } from './components/ChatWidget';
+import ChatFab from './components/ChatFab';
+import ChatBot from './components/ChatBot';
 import { Footer } from './components/Footer';
 import { BrandingFooter } from './components/BrandingFooter';
 import { CartModal } from './components/CartModal';
@@ -74,6 +75,7 @@ import { useOrderStore } from './stores/orderStore';
 
 function App() {
   const [isCartOpen, setIsCartOpen] = useState(false);
+  const [isChatOpen, setIsChatOpen] = useState(false);
   const { user } = useAuth();
   const { initPromotionsListener, initExtrasListener } = useCartStore();
   const { initSettings } = useSettingsStore();
@@ -114,7 +116,8 @@ function App() {
         <Footer />
         <CartModal isOpen={isCartOpen} onClose={() => setIsCartOpen(false)} />
         <BrandingFooter />
-        <ChatWidget />
+        <ChatFab onOpen={() => setIsChatOpen(true)} isOpen={isChatOpen} />
+        <ChatBot isOpen={isChatOpen} onClose={() => setIsChatOpen(false)} />
       </div>
     </BrowserRouter>
   );
