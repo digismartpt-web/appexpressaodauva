@@ -412,21 +412,13 @@ export default function AvatarLuis({
     camera.lookAt(0, 0, 0);
     cameraRef.current = camera;
 
-    // Test WebGL support first
-    const testCanvas = document.createElement('canvas');
-    const gl = testCanvas.getContext('webgl') || testCanvas.getContext('experimental-webgl');
-    if (!gl) {
-      console.warn('[AvatarLuis] WebGL not supported, using fallback');
-      setLoadStatus('error');
-      return;
-    }
-
     // Renderer
     let renderer: THREE.WebGLRenderer;
     try {
       renderer = new THREE.WebGLRenderer({
         antialias: true,
         alpha: false,
+        powerPreference: 'high-performance',
       });
     } catch (e) {
       console.warn('[AvatarLuis] WebGL not available, using fallback:', e);
