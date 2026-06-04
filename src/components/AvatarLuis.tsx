@@ -412,12 +412,27 @@ export default function AvatarLuis({
     camera.lookAt(0, 0, 0);
     cameraRef.current = camera;
 
+    // Test WebGL support first
+    const testCanvas = document.createElement('canvas');
+    const gl = testCanvas.getContext('webgl') || testCanvas.getContext('experimental-webgl');
+    if (!gl) {
+      console.warn('[AvatarLuis] WebGL not supported, using fallback');
+      setLoadStatus('error');
+      return;
+    }
+
     // Renderer
-    const renderer = new THREE.WebGLRenderer({
-      antialias: true,
-      alpha: false,
-      powerPreference: 'high-performance',
-    });
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({
+        antialias: true,
+        alpha: false,
+      });
+    } catch (e) {
+      console.warn('[AvatarLuis] WebGL not available, using fallback:', e);
+      setLoadStatus('error');
+      return;
+    }
     renderer.setSize(w, h);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -891,7 +906,13 @@ export default function AvatarLuis({
         </div>
       )}
 
-      {loadStatus !== 'loading' && (
+      {loadStatus === 'error' && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#2a1a0e]">
+          <img src="/lui.png" alt="Luis" className="w-full h-full object-cover" />
+        </div>
+      )}
+
+      {loadStatus !== 'loading' && loadStatus !== 'error' && (
         <div className="absolute top-3 left-3 z-10 bg-black/60 backdrop-blur-sm px-3 py-1.5 rounded-full">
           <span className="text-white/70 text-[10px]">
             {loadStatus === 'ready' ? 'Luis' : 'Erro'}
