@@ -1,56 +1,30 @@
 import { useState, useRef, useEffect } from 'react';
 import { CATALOGO, catalogoParaTexto } from '../data/wineCatalog';
-import TalkingHead3D from './TalkingHead3D';
+import AvatarLuis from './AvatarLuis';
 
-const API_KEY = import.meta.env.VITE_CLAUDE_API_KEY || '';
-const API_URL = 'https://api.anthropic.com/v1/messages';
+const API_KEY = import.meta.env.VITE_HERMES_API_KEY || 'hermes-api-key';
+const API_HOST = import.meta.env.VITE_HERMES_API_HOST || window.location.hostname;
+const API_URL = `http://${API_HOST}:8642/v1/chat/completions`;
 
 const MENSAGENS_ESPERA = [
-  "Boa pergunta! Deixe-me verificar a disponibilidade dos nossos vinhos... 🍷",
-  "Um momento! Estou a consultar o nosso catálogo para si... 🔍",
-  "Óptima escolha de situação! Vou verificar o que temos disponível agora mesmo... 🍾",
-  "Claro! Deixe-me analisar os nossos crus e a disponibilidade actual... 🧐",
-  "Com certeza! Estou a verificar o stock disponível, já lhe respondo... ✨",
+  "Boa pergunta! Deixe-me verificar... 🍷",
+  "Um momento! Estou a consultar para si... 🔍",
+  "Óptima escolha! Vou verificar o que temos disponível... ✨",
+  "Claro! Já lhe respondo... 🧐",
+  "Com certeza! Um instante... ✨",
 ];
-
-const SYSTEM_PROMPT =
-  `És o Luis, sommelier simpático e acessível da loja de vinhos online "Expressão da Uva". Falas sempre em português europeu, com um tom caloroso, descontraído e entusiasta. Evitas jargão técnico excessivo.
-
-REGRA FUNDAMENTAL: Só podes recomendar vinhos que estejam no catálogo abaixo. Nunca sugeres vinhos que não estejam nesta lista.
-
-CATÁLOGO DISPONÍVEL NA LOJA:\n${catalogoParaTexto()}
-
-Quando recomendas um vinho:
-- Diz o nome exato e a região
-- Menciona o preço
-- Explica porque combina com a situação
-- Partilha uma curiosidade que torna esse vinho especial
-- Máximo 2 sugestões
-
-Respostas curtas e diretas, máximo 3 parágrafos.`;
 
 interface Mensagem { role: 'user' | 'assistant'; text: string }
 
-function mockResponse(userMsg: string): string {
-  const q = userMsg.toLowerCase();
-  if (q.includes('polvo') || q.includes('marisco') || q.includes('peixe'))
-    return "Excelente escolha! Para polvo ou marisco, recomendo o **Quinta de Chocapalha Castelão** (14€) — um tinto leve de Lisboa que casa perfeitamente com polvo assado. Se preferir branco, o **Anselmo Mendes Contacto** (16€) é um Alvarinho com textura única que acompanha marisco na perfeição. 🐙🍷";
-  if (q.includes('romântica') || q.includes('romantico') || q.includes('jantar'))
-    return "Para uma noite romântica, sugiro o **Mencia Dominio do Bibei** (22€) da Galiza — elegante e perfumado, lembra um Pinot Noir ibérico. Se preferir um espumante, o **Murganheira Blanc de Blancs** (24€) é um método clássico português que traz logo um ar de celebração! 🕯️🥂";
-  if (q.includes('presente') || q.includes('oferecer'))
-    return "Que bela ideia! Para oferecer, recomendo o **Envínate Palo Blanco** (28€) de Tenerife — um branco vulcânico surpreendente. Ou o **Niepoort Colheita 2015** (38€), um Porto envelhecido em cascos, perfeito para quem gosta de algo doce e complexo. 🎁";
-  if (q.includes('branco'))
-    return "Temos brancos fantásticos! O **Quinta do Ameal Loureiro** (13€) é super floral e fresco. O **Filipa Pato Nossa Calcário** (17€) é uma Bical da Bairrada, mineral e elegante. 🍋🥂";
-  if (q.includes('tinto'))
-    return "Nos tintos temos verdadeiras pérolas! O **Niepoort Nat'Cool** (12€) é um tinto leve que se serve fresco. O **Herdade do Rocim Amphora** (18€) é fermentado em ânfora, muito mineral. 🍇🍷";
-  return "Que boa pergunta! Deixe-me pensar nos vinhos que melhor se encaixam... Temos opções fantásticas no nosso catálogo. Gostaria de saber mais sobre tintos, brancos, ou tem alguma ocasião especial em mente? 🍷";
+function respondFallback(): string {
+ return "Desculpe, ainda não tenho resposta para essa pergunta. O meu catálogo está em constante atualização — em breve trarei novidades! 🍷";
 }
 
 interface ChatBotProps { isOpen: boolean; onClose: () => void }
 
 export default function ChatBot({ isOpen, onClose }: ChatBotProps) {
   const [messages, setMessages] = useState<Mensagem[]>([
-    { role: 'assistant', text: 'Olá! Sou o Luis, o seu sommelier pessoal da Expressão da Uva. Adoro apresentar vinhos que ainda poucos conhecem — verdadeiras surpresas na garrafa! Em que posso ajudar hoje?' }
+    { role: 'assistant', text: 'Olá! Sou o Luis, o seu assistente pessoal da Expressão da Uva. Como posso ajudar hoje?' }
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -67,7 +41,7 @@ export default function ChatBot({ isOpen, onClose }: ChatBotProps) {
       document.body.style.overflow = 'hidden';
       // Auto-speak welcome after a moment
       setTimeout(() => setAvatarText(
-        'Olá! Sou o Luis, o seu sommelier pessoal da Expressão da Uva. Adoro apresentar vinhos que ainda poucos conhecem — verdadeiras surpresas na garrafa! Em que posso ajudar hoje?'
+        'Olá! Sou o Luis, o seu assistente pessoal da Expressão da Uva. Como posso ajudar hoje?'
       ), 500);
     } else {
       document.body.style.overflow = '';
@@ -80,20 +54,35 @@ export default function ChatBot({ isOpen, onClose }: ChatBotProps) {
 
   async function callAPI(userMsg: string): Promise<string> {
     histRef.current.push({ role: 'user', content: userMsg });
-    if (!API_KEY) {
-      await new Promise(r => setTimeout(r, 1200));
-      const reply = mockResponse(userMsg);
-      histRef.current.push({ role: 'assistant', content: reply });
-      return reply;
-    }
+    const systemPrompt = `És o Luis, assistente da loja "Expressão da Uva". Falas sempre em português europeu, com tom caloroso e simpático.
+
+REGRAS ABSOLUTAS:
+1. REGRA DE OURO — NUNCA uses conhecimento geral sobre vinhos. NUNCA inventes produtos, castas, regiões, preços, harmonizações ou qualquer informação que não esteja explicitamente no catálogo abaixo.
+2. Se o catálogo estiver vazio, a tua ÚNICA resposta é informar que estamos a preparar novidades em breve. NÃO sugeres, inventas ou descreves nenhum vinho, casta, região ou harmonização.
+3. Se a pergunta não for sobre os vinhos do catálogo (ou sobre a loja), responde educadamente que só podes ajudar com os vinhos disponíveis na loja e redireciona para o catálogo.
+4. NÃO respondes a perguntas sobre outros assuntos — tecnologia, clima, conversa casual, cultura geral, conselhos pessoais. Redirecionas sempre para o catálogo.
+5. Se o utilizador pedir um vinho ou característica que não existe no catálogo, dizes que não está disponível e redirecionas para o que realmente existe.
+
+CATÁLOGO:\n${catalogoParaTexto()}
+
+Respostas curtas e diretas, máximo 3 parágrafos.`;
+
     const res = await fetch(API_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': API_KEY, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 800, system: SYSTEM_PROMPT, messages: histRef.current }),
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${API_KEY}` },
+      body: JSON.stringify({
+        model: 'hermes-agent',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          ...histRef.current,
+        ],
+        max_tokens: 800,
+        temperature: 0.7,
+      }),
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
-    const reply = data.content?.find((b: any) => b.type === 'text')?.text || 'Desculpe, não consegui responder.';
+    const reply = data.choices?.[0]?.message?.content || 'Desculpe, não consegui responder.';
     histRef.current.push({ role: 'assistant', content: reply });
     return reply;
   }
@@ -124,9 +113,9 @@ export default function ChatBot({ isOpen, onClose }: ChatBotProps) {
     } catch {
       setMessages(prev => {
         const filtered = prev.slice(0, -1);
-        return [...filtered, { role: 'assistant', text: 'Desculpe, tive um problema técnico. Por favor tente novamente!' }];
+        return [...filtered, { role: 'assistant', text: respondFallback() }];
       });
-      setAvatarText('Desculpe, tive um problema técnico.');
+      setAvatarText(respondFallback());
     } finally {
       setLoading(false);
     }
@@ -151,7 +140,7 @@ export default function ChatBot({ isOpen, onClose }: ChatBotProps) {
               </svg>
             </button>
             <div className="flex-1 min-w-0 ml-1">
-              <div className="text-white text-sm font-semibold">Luis · Sommelier</div>
+              <div className="text-white text-sm font-semibold">Luis · Assistente</div>
               <div className="flex items-center gap-1.5 mt-0.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-[#5DCAA5] inline-block" />
                 <span className="text-[#C8A96E] text-xs">Expressão da Uva</span>
@@ -164,7 +153,7 @@ export default function ChatBot({ isOpen, onClose }: ChatBotProps) {
             </button>
           </div>
           <div className="relative w-full h-[340px] sm:h-[380px]">
-            <TalkingHead3D text={avatarText} autoSpeak={true} />
+            <AvatarLuis text={avatarText} autoSpeak={true} />
           </div>
         </div>
 
@@ -192,23 +181,6 @@ export default function ChatBot({ isOpen, onClose }: ChatBotProps) {
           )}
           <div ref={messagesEndRef} />
         </div>
-
-        {/* ===== SUGGESTIONS ===== */}
-        {messages.length <= 2 && !loading && (
-          <div className="px-4 py-2 bg-[#f9f9f9] border-t border-[#e0e0e0] flex flex-wrap gap-1.5">
-            {[
-              ['Jantar de polvo', 'Que vinho para um jantar de polvo?'],
-              ['Noite romântica', 'Vinho para uma noite romântica'],
-              ['Ideia de presente', 'Tem algo diferente para oferecer como presente?'],
-              ['Marisco', 'Vinho branco para marisco'],
-            ].map(([label, q]) => (
-              <button key={label} onClick={() => askQuick(q)}
-                className="text-xs px-3 py-1.5 rounded-full border border-[#C8A96E] text-[#8a6a00] hover:bg-[#f5efc0] transition-colors">
-                {label}
-              </button>
-            ))}
-          </div>
-        )}
 
         {/* ===== INPUT ===== */}
         <div className="flex gap-2 px-4 py-3 border-t border-[#e0e0e0] bg-white">

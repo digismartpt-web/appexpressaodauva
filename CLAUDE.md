@@ -4,7 +4,7 @@
 Application React + Vite + TypeScript pour une cave à vin en ligne "Expressão da Uva". L'application inclut un chatbot sommelier avec un avatar 3D parlant du personnage "Luis".
 
 ## Structure clé
-- `src/components/TalkingHead3D.tsx` — Composant Three.js avec FBXLoader qui charge model.fbx
+- `src/components/AvatarLuis.tsx` — Composant Three.js avec FBXLoader qui charge model.fbx (remplace TalkingHead3D.tsx)
 - `src/components/ChatBot.tsx` — Panneau de chat qui intègre TalkingHead3D avec autoSpeak
 - `public/model.fbx` — Modèle 3D FBX de Luis (9.1MB) avec morph targets
 - `public/lui.png` — Photo de fallback
