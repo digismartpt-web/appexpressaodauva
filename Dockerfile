@@ -3,22 +3,15 @@ FROM node:22-alpine AS build
 
 WORKDIR /app
 
-# Arguments de build (Coolify les injecte via --build-arg)
-ARG VITE_SUPABASE_URL
-ARG VITE_SUPABASE_ANON_KEY
-ARG VITE_GOOGLE_MAPS_API_KEY
-ARG VITE_STRIPE_PUBLIC_KEY
-
-# Reconstruction forcée pour garantir l'injection
-ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL
-ENV VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY
-ENV VITE_GOOGLE_MAPS_API_KEY=$VITE_GOOGLE_MAPS_API_KEY
-ENV VITE_STRIPE_PUBLIC_KEY=$VITE_STRIPE_PUBLIC_KEY
-
 COPY package*.json ./
 RUN npm install
 
 COPY . .
+COPY env.b64 ./
+
+# Decode env vars from base64 for Vite
+RUN base64 -d env.b64 > .env.production && rm env.b64
+
 RUN npm run build
 
 # Stage 2: Serve
