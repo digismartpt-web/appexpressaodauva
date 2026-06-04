@@ -11,6 +11,8 @@ interface WinesState {
   loading: boolean;
   initialized: boolean;
   initWinesStore: () => () => void;
+  reloadWines: () => Promise<void>;
+  reloadExtras: () => Promise<void>;
 }
 
 export const useWinesStore = create<WinesState>((set, get) => ({
@@ -72,5 +74,29 @@ export const useWinesStore = create<WinesState>((set, get) => ({
       unsubAllExtras();
       set({ initialized: false }); // Reset so it can be re-initialized if needed
     };
+  },
+
+  reloadWines: async () => {
+    try {
+      const [allWines, wines] = await Promise.all([
+        winesService.getAllWinesForAdmin(),
+        winesService.getAllWines(),
+      ]);
+      set({ allWines, wines });
+    } catch (e) {
+      console.error('[WinesStore] Erro ao recarregar wines:', e);
+    }
+  },
+
+  reloadExtras: async () => {
+    try {
+      const [allExtras, extras] = await Promise.all([
+        extrasService.getAllExtrasForAdmin(),
+        extrasService.getAllExtras(),
+      ]);
+      set({ allExtras, extras });
+    } catch (e) {
+      console.error('[WinesStore] Erro ao recarregar extras:', e);
+    }
   }
 }));

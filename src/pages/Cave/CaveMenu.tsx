@@ -1,34 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { Plus, CreditCard as Edit2, Trash2, Eye, EyeOff, Settings } from 'lucide-react';
 import { winesService, extrasService } from '../../services/supabaseService';
 import { useWinesStore } from '../../stores/winesStore';
 import { useCaveCategories } from '../../hooks/useCaveCategories';
 import type { Wine, Extra } from '../../types';
-
-// Helper pour re-fetch manuel (contourne Realtime qui peut ne pas fonctionner)
-const refreshWines = async () => {
-  try {
-    const [wines, allWines] = await Promise.all([
-      winesService.getAllWines(),
-      winesService.getAllWinesForAdmin(),
-    ]);
-    useWinesStore.setState({ wines, allWines, loading: false });
-  } catch (err) {
-    console.error('[CaveMenu] Erro ao re-fetch wines:', err);
-  }
-};
-
-const refreshExtras = async () => {
-  try {
-    const [extras, allExtras] = await Promise.all([
-      extrasService.getAllExtras(),
-      extrasService.getAllExtrasForAdmin(),
-    ]);
-    useWinesStore.setState({ extras, allExtras, loading: false });
-  } catch (err) {
-    console.error('[CaveMenu] Erro ao re-fetch extras:', err);
-  }
-};
 
 interface WineFormData {
   name: string;
@@ -77,17 +52,7 @@ const initialFormData: WineFormData = {
 };
 
 export function CaveMenu() {
-  const { allWines: wines, allExtras: extras, loading } = useWinesStore();
-  const [pageReady, setPageReady] = useState(false);
-
-  useEffect(() => {
-    if (!loading) setPageReady(true);
-  }, [loading]);
-
-  useEffect(() => {
-    const t = setTimeout(() => setPageReady(true), 5000);
-    return () => clearTimeout(t);
-  }, []);
+  const { allWines: wines, allExtras: extras, loading, reloadWines, reloadExtras } = useWinesStore();
   const { activeCategories } = useCaveCategories();
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -173,9 +138,9 @@ export function CaveMenu() {
         const newId = await winesService.createWine(markedUpFormData);
         console.log('✅ Wine criada com ID:', newId);
       }
-      // Re-fetch manuel pour mettre à jour l'affichage immédiatement
-      await refreshWines();
+      await reloadWines();
 
+      console.log('✅ Gravação concluída com sucesso, a fechar o modal');
       setShowModal(false);
       setEditingWine(null);
       setFormData(initialFormData);
@@ -218,7 +183,7 @@ export function CaveMenu() {
     }
     try {
       await winesService.deleteWine(wine.id);
-      await refreshWines();
+      await reloadWines();
     } catch (error) {
       console.error('Erro ao apagar:', error);
       alert('Erro ao eliminar a wine');
@@ -230,7 +195,7 @@ export function CaveMenu() {
       const currentActiveState = (wine as any).active ?? true;
       const newActiveState = !currentActiveState;
       await winesService.updateWine(wine.id, { active: newActiveState });
-      await refreshWines();
+      await reloadWines();
     } catch (error) {
       console.error('Erro na atualização:', error);
       alert('Erro ao atualizar a wine');
@@ -252,8 +217,7 @@ export function CaveMenu() {
       } else {
         await extrasService.createExtra(markedUpExtraData);
       }
-      // Re-fetch manuel
-      await refreshExtras();
+      await reloadExtras();
       setShowExtraFormModal(false);
       setEditingExtra(null);
       setExtraFormData({ name: '', price: 0, active: true });
@@ -279,7 +243,7 @@ export function CaveMenu() {
     try {
       const newActiveState = !((extra as any).active !== false);
       await extrasService.updateExtra(extra.id, { active: newActiveState });
-      await refreshExtras();
+      await reloadExtras();
     } catch (error) {
       console.error('Erro ao mudar o estado do extra:', error);
       alert('Erro ao alterar o estado do extra');
@@ -292,7 +256,7 @@ export function CaveMenu() {
     }
     try {
       await extrasService.deleteExtra(extra.id);
-      await refreshExtras();
+      await reloadExtras();
     } catch (error) {
       console.error('Erro ao apagar o extra:', error);
       alert('Erro ao eliminar o extra');
@@ -336,7 +300,7 @@ export function CaveMenu() {
     ? activeCategories.map(cat => cat.name)
     : [...new Set(wines.map(wine => wine.category || 'Outros'))];
 
-  if (!pageReady) {
+  if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="text-center">

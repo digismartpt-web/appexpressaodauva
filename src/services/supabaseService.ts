@@ -154,10 +154,10 @@ export const winesService = {
   },
 
   subscribeToActiveWines(callback: (wines: Wine[]) => void) {
-    // First load
+    // First load — always call callback (empty array on error so loading clears)
     supabase.from(COLLECTIONS.WINES).select('*').eq('active', true).order('created_at', { ascending: false }).then(({ data }) => {
-      if (data) callback(data.map(this.mapWine));
-    });
+      callback((data || []).map(this.mapWine));
+    }).catch(() => callback([]));
 
     const channelId = `active_wines_${Date.now()}_${Math.random().toString(36).substring(7)}`;
     const channel = supabase.channel(channelId)
